@@ -24,6 +24,11 @@ endpoints, regional station data, or related playback code.
 - [Upper enclosure model (STEP)](hardware/3d/PocketAudioDeck_Upper.step)
 - [Base enclosure model (STEP)](hardware/3d/PocketAudioDeck_Base.step)
 
+## Assembly
+
+Fasten the enclosure on both the headphone-jack side and the M5StickS3 USB
+cable connector side with M2 x 6 mm self-tapping screws.
+
 ## Features
 
 - Four SomaFM Non-SSL 128kbps MP3 stations

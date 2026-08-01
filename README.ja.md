@@ -22,6 +22,10 @@ M5StickS3とPocket Audio Deck専用基板向けの、PlatformIO/Arduinoファー
 - [筐体上側モデル（STEP）](hardware/3d/PocketAudioDeck_Upper.step)
 - [筐体下側モデル（STEP）](hardware/3d/PocketAudioDeck_Base.step)
 
+## 組み立て
+
+筐体は、イヤホンジャック側およびM5StickS3のUSBケーブルコネクタ側の両方を、M2 x 6 mmタッピングネジで締結します。
+
 ## 機能
 
 - SomaFMのNon-SSL 128kbps MP3ストリーム4局
