@@ -1,0 +1,5 @@
+.pio/
+.pio-core/
+.pio-python-deps/
+.pio-py313-root/
+.vscode/
