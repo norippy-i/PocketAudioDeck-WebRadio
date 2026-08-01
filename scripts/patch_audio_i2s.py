@@ -55,7 +55,6 @@ else:
         "            }\n"
         "        }\n"
         "        destroy_decoder();\n",
-        "            }\n"
         "        }\n"
         "        // Close a stale file handle before unmounting a removed SD card.\n"
         "        if (m_audiofile) {\n"
