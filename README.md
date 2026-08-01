@@ -1,5 +1,7 @@
 # Pocket Audio Deck Web Radio
 
+[日本語](README.ja.md)
+
 Open PlatformIO/Arduino firmware for the M5StickS3 and Pocket Audio Deck board.
 It plays public HTTP MP3 web-radio streams through the board's PCM5102A DAC and
 also plays MP3 files from microSD.
@@ -15,6 +17,12 @@ endpoints, regional station data, or related playback code.
 - Previous/next media switches
 - Volume up/down and push-to-mute control
 - Headphone output
+
+## Hardware Files
+
+- [Schematic (PDF)](hardware/schematic/M5_PocketAudioDeck.pdf)
+- [Upper enclosure model (STEP)](hardware/3d/PocketAudioDeck_Upper.step)
+- [Base enclosure model (STEP)](hardware/3d/PocketAudioDeck_Base.step)
 
 ## Features
 
@@ -52,7 +60,8 @@ Credentials are stored in ESP32 NVS.
 
 ## Controls
 
-- SW1/SW2: previous/next station or MP3 track
+- SW1: next station or MP3 track
+- SW2: previous station or MP3 track
 - Volume control left/right: volume down/up
 - Volume control push: toggle mute
 - KEY1 click in MP3 mode: play/pause
