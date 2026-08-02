@@ -24,7 +24,7 @@ I wanted the result to behave like a dedicated device, not a smartphone accessor
 
 The result is Pocket Audio Deck: a custom expansion board, a two-part 3D-printed enclosure, and Arduino firmware that turns the M5StickS3 into a Web Radio and microSD MP3 player.
 
-![Pocket Audio Deck playing an MP3 through wired earphones](assets/finished-player.jpg)
+> **HACKSTER PHOTO:** Finished Pocket Audio Deck playing an MP3 through wired earphones (`IMG_6190.jpg`).
 
 ### From the first prototype to a dedicated audio board
 
@@ -41,9 +41,7 @@ I designed a dedicated Pocket Audio Deck board in KiCad. The board connects to t
 
 The M5StickS3 remains the controller. It handles Wi-Fi, network protocols, MP3 decoding, metadata, FFT processing, the display, button logic, persistent settings, and mode switching. The custom board handles audio conversion, headphone drive, storage, and ergonomic controls.
 
-![Component side of the Pocket Audio Deck PCB](assets/pcb-front.jpg)
-
-![Rear side of the PCB with its Pocket Audio Deck logo](assets/pcb-back.jpg)
+> **HACKSTER PHOTOS:** Component and logo sides of the custom PCB (`IMG_6171.jpg` and `IMG_6170.jpg`).
 
 ### Hardware architecture
 
@@ -76,7 +74,7 @@ The main connections are:
 
 The complete schematic is included in the GitHub repository. The PCB uses separate digital and analog supply domains around the DAC and headphone amplifier. R18 is a 0-ohm link in the current design; it can be replaced by a ferrite bead around 600 ohms at 100 MHz if additional supply-noise suppression is needed.
 
-![M5StickS3 fitted directly to the custom expansion PCB](assets/pcb-with-m5sticks3.jpg)
+> **HACKSTER PHOTO:** M5StickS3 fitted directly to the custom expansion PCB (`IMG_6172.jpg`).
 
 ![Pocket Audio Deck schematic](assets/schematic.png)
 
@@ -86,15 +84,13 @@ Because the original idea was to recreate the directness of an older dedicated M
 
 The side layout follows the familiar arrangement of portable audio players. The volume control and microSD slot can be reached without turning the device into a menu-driven gadget, while the previous and next tact switches are positioned for quick operation. I also designed small 3D-printed button caps around the switches so they are easier to find and press while still being printable as part of a compact enclosure.
 
-![Side controls, microSD access, and fitted M5StickS3](assets/enclosure-controls-a.jpg)
-
-![Opposite side of the assembled enclosure](assets/enclosure-controls-b.jpg)
+> **HACKSTER PHOTOS:** Both control sides of the assembled enclosure (`IMG_6191.jpg` and `IMG_6192.jpg`).
 
 The upper and base parts are provided as STEP files. They capture the M5StickS3 closely and protect the exposed electronics. The enclosure is secured from the rear using M2 x 6 mm self-tapping screws at the headphone-jack and USB-connector sides. This prevents it from coming apart during everyday carrying while still allowing deliberate disassembly for maintenance.
 
 Finally, I added an integrated strap loop. It is a small detail, but it changes the project from something that lives on a workbench into something that can actually be carried like the pocket audio players that inspired it.
 
-![Rear screws and integrated carrying-strap loop](assets/enclosure-strap.jpg)
+> **HACKSTER PHOTO:** Rear screws and integrated carrying-strap loop (`IMG_6193.JPG`).
 
 ## Firmware
 
