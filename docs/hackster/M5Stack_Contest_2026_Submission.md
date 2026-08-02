@@ -18,13 +18,13 @@
 
 ### Why I built it
 
-I wanted a small standalone audio player that felt more like a dedicated MP3 player than a smartphone app. It should start quickly, work with physical controls, show useful information at a glance, and play through wired headphones. I also wanted it to switch between two sources: live Internet radio and MP3 files stored on a microSD card.
+When I first looked at the M5StickS3 specifications, I immediately thought of the dedicated MP3 players I used about 20 years ago. Its compact body already contained a display, physical buttons, Wi-Fi, an ESP32-S3, and enough flash and PSRAM for audio decoding and a responsive interface. It felt like the right foundation for rebuilding that familiar kind of pocket player with modern network features. The idea sounded both nostalgic and genuinely fun to make.
 
-The M5StickS3 was a good starting point because it combines an ESP32-S3, Wi-Fi, PSRAM, a color display, and physical buttons in a very compact body. The challenge was turning it into a complete pocket audio product instead of leaving it as a development board with wires attached.
+I wanted the result to behave like a dedicated device, not a smartphone accessory or a development board with wires attached. It should start quickly, work through physical controls, show the important information at a glance, play through wired headphones, and switch between live Internet radio and MP3 files on a microSD card.
 
 The result is Pocket Audio Deck: a custom expansion board, a two-part 3D-printed enclosure, and Arduino firmware that turns the M5StickS3 into a Web Radio and microSD MP3 player.
 
-> **PHOTO 1 - REQUIRED:** Finished Pocket Audio Deck, display on, photographed at a slight angle. Use this as the Hackster cover image.
+![Pocket Audio Deck playing an MP3 through wired earphones](assets/finished-player.jpg)
 
 ### From the first prototype to a dedicated audio board
 
@@ -41,17 +41,22 @@ I designed a dedicated Pocket Audio Deck board in KiCad. The board connects to t
 
 The M5StickS3 remains the controller. It handles Wi-Fi, network protocols, MP3 decoding, metadata, FFT processing, the display, button logic, persistent settings, and mode switching. The custom board handles audio conversion, headphone drive, storage, and ergonomic controls.
 
-> **PHOTO 2 - REQUIRED:** Top and bottom views of the assembled custom PCB before it is installed in the enclosure.
+![Component side of the Pocket Audio Deck PCB](assets/pcb-front.jpg)
+
+![Rear side of the PCB with its Pocket Audio Deck logo](assets/pcb-back.jpg)
 
 ### Hardware architecture
 
-The audio path is fully digital until it reaches the custom board:
+The architecture deliberately separates control and decoding from the analog audio path:
 
-1. The M5StickS3 receives an HTTP MP3 stream or reads an MP3 file from microSD.
-2. ESP32-audioI2S decodes the MP3 data.
-3. PCM samples are sent over I2S to the PCM5102A.
-4. The DAC's left and right outputs feed the TPA6132A2 headphone amplifier.
-5. The amplified stereo signal is available at the 3.5 mm headphone jack.
+| Stage | Main component | Responsibility | Data or signal path |
+|---|---|---|---|
+| Audio source | Wi-Fi or microSD | Receive an HTTP MP3 stream or read a local MP3 file | Network stream or SPI storage |
+| Control and decoding | M5StickS3 / ESP32-S3 | Decode MP3, process metadata and controls, generate the UI, and produce PCM samples | ESP32-audioI2S |
+| Digital audio transfer | M5StickS3 to custom PCB | Carry decoded stereo PCM without an intermediate analog connection | I2S BCLK, LRCK, and DATA |
+| Digital-to-analog conversion | PCM5102A | Convert stereo I2S PCM into left and right analog audio | Line-level stereo |
+| Headphone drive | TPA6132A2 | Drive wired earphones at the selected volume | Amplified stereo |
+| User output | 3.5 mm headphone jack | Provide the final listening connection | Wired headphones |
 
 The main connections are:
 
@@ -71,15 +76,25 @@ The main connections are:
 
 The complete schematic is included in the GitHub repository. The PCB uses separate digital and analog supply domains around the DAC and headphone amplifier. R18 is a 0-ohm link in the current design; it can be replaced by a ferrite bead around 600 ohms at 100 MHz if additional supply-noise suppression is needed.
 
+![M5StickS3 fitted directly to the custom expansion PCB](assets/pcb-with-m5sticks3.jpg)
+
 ![Pocket Audio Deck schematic](assets/schematic.png)
 
 ### Enclosure
 
-The enclosure consists of an upper and base part, both provided as STEP files in the repository. It keeps the display and controls accessible while protecting the custom board and microSD card.
+Because the original idea was to recreate the directness of an older dedicated MP3 player, I deliberately kept the enclosure simple. The M5StickS3 and the custom PCB fit tightly into one continuous package instead of looking like two development boards joined together.
 
-Fasten the enclosure at the headphone-jack side and the M5StickS3 USB connector side with M2 x 6 mm self-tapping screws.
+The side layout follows the familiar arrangement of portable audio players. The volume control and microSD slot can be reached without turning the device into a menu-driven gadget, while the previous and next tact switches are positioned for quick operation. I also designed small 3D-printed button caps around the switches so they are easier to find and press while still being printable as part of a compact enclosure.
 
-> **PHOTO 3 - REQUIRED:** Exploded view showing the M5StickS3, custom PCB, upper enclosure, base enclosure, and screws.
+![Side controls, microSD access, and fitted M5StickS3](assets/enclosure-controls-a.jpg)
+
+![Opposite side of the assembled enclosure](assets/enclosure-controls-b.jpg)
+
+The upper and base parts are provided as STEP files. They capture the M5StickS3 closely and protect the exposed electronics. The enclosure is secured from the rear using M2 x 6 mm self-tapping screws at the headphone-jack and USB-connector sides. This prevents it from coming apart during everyday carrying while still allowing deliberate disassembly for maintenance.
+
+Finally, I added an integrated strap loop. It is a small detail, but it changes the project from something that lives on a workbench into something that can actually be carried like the pocket audio players that inspired it.
+
+![Rear screws and integrated carrying-strap loop](assets/enclosure-strap.jpg)
 
 ## Firmware
 
@@ -115,13 +130,21 @@ Wi-Fi is explicitly disabled in MP3 mode. This reduces unnecessary RF activity a
 
 ### Display and interaction
 
-The interface is inspired by compact MP3 players rather than a general-purpose touchscreen UI. The upper area shows the station or artist and the current program or track title. The lower 64-pixel area displays a 16-band FFT spectrum analyzer.
+The interface is inspired by compact MP3 players rather than a general-purpose touchscreen UI. The small display has to communicate a surprising amount of information without becoming crowded, so every area and temporary overlay has a specific role.
 
-The spectrum is calculated from decoded PCM data, not from random animation. A short history buffer delays the visualization by approximately 180 ms so that the on-screen motion aligns more naturally with the audio heard through the headphone output. The grayscale palette keeps the display readable without overpowering the metadata.
+| Display or interaction feature | Implementation | Why it matters in daily use |
+|---|---|---|
+| Station, artist, program, and track text | Large primary metadata area with single-line scrolling only when text does not fit | Keeps the most useful information readable without permanent truncation |
+| 16-band spectrum analyzer | Real FFT calculated from decoded PCM samples | Reacts to the actual audio instead of displaying decorative random bars |
+| Audio and visual synchronization | Approximately 180 ms of spectrum history | Makes the display motion align more naturally with sound from the headphones |
+| Grayscale spectrum | Reduced-contrast bars below the metadata | Preserves the monochrome MP3-player character without overpowering the text |
+| Tuning and buffering feedback | Large centered messages temporarily reuse the inactive spectrum area | Communicates state without covering station or program information |
+| Volume feedback | Temporary full-width `VOL.xx` overlay | Gives immediate confirmation while leaving metadata space free during playback |
+| MP3 progress | Progress bar, elapsed/remaining time, title, artist, and repeat/shuffle icon | Provides the information expected from a dedicated music player |
+| Low-flicker drawing | M5Unified sprites and localized redraws | Prevents full-screen flashing when metadata, volume, or repeat mode changes |
+| Persistent behavior | NVS stores the last mode, station, volume, EQ, and MP3 preferences | Restarts in the state the listener was actually using; mute is intentionally not restored |
 
-During tuning or buffering, the spectrum area is reused for a large centered status message. Volume changes appear as a temporary full-width overlay, avoiding a permanent volume label that would consume metadata space.
-
-The firmware stores the last station, operating mode, volume, EQ preset, and MP3 playback preferences in NVS. After a restart, it returns to the previous Radio or MP3 mode. Mute is intentionally not persisted.
+Together, these details make Pocket Audio Deck behave much closer to a finished consumer MP3 player than a typical embedded audio demo. It remembers how it was used, handles removable media, exposes familiar playback modes, displays real metadata and remaining time, responds immediately to physical controls, and keeps the interface stable while audio continues in the background.
 
 > **PHOTO 4 - REQUIRED:** Radio mode showing a station, current title, and active spectrum analyzer.
 
@@ -223,6 +246,12 @@ This project grew through repeated real-device testing. Several details only bec
 Pocket Audio Deck is not just a Web Radio sketch. It combines an M5Stack controller, a purpose-built audio PCB, physical controls, removable storage, a responsive low-flicker interface, real PCM-based visualization, persistent settings, and a printable enclosure into one reproducible pocket device.
 
 The public firmware intentionally uses direct HTTP MP3 radio streams that other makers can test without regional authentication. The source code, schematic PDF, and enclosure STEP files are all available in the GitHub repository.
+
+### A private Radiko version for Japan
+
+I also developed and hardware-tested a private version that can play Radiko, a Japanese service for listening to live radio and podcasts. This mode can show the current station and program information and uses the same physical controls, headphone output, and spectrum interface as the public Web Radio edition.
+
+The Radiko implementation is demonstrated in the project video, but its service-specific authentication and streaming code is intentionally not included in the public repository. The reproducible public build therefore uses open HTTP MP3 radio streams, while the private version shows that the same Pocket Audio Deck hardware can also serve as a practical Japanese radio receiver.
 
 ## Result
 
