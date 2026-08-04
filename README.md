@@ -105,6 +105,9 @@ HLS, and services requiring authentication may need additional implementation.
 
 ## License
 
-Firmware source in this repository is released under the MIT License. Radio
-content, station names, trademarks, and third-party libraries remain the
-property of their respective owners and are not covered by this license.
+Firmware source in this repository is released under the GNU General Public
+License v3.0. It builds against and applies local patches to
+[ESP32-audioI2S](https://github.com/schreibfaul1/ESP32-audioI2S), which is also
+licensed under GPL-3.0. See [LICENSE](LICENSE) for the full terms. Radio content,
+station names, trademarks, and other third-party libraries remain the property
+of their respective owners and are not covered by this license.
