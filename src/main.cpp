@@ -42,6 +42,9 @@ static constexpr uint32_t kSdPresenceCheckIntervalMs = 750;
 static constexpr uint32_t kUsbPowerPollIntervalMs = 1000;
 static constexpr int16_t kUsbPresentVoltageMv = 4200;
 static constexpr int16_t kUsbAbsentVoltageMv = 3800;
+static constexpr uint32_t kMp3ViewHoldMs = 1000;
+static constexpr uint32_t kRadioSetupHoldMs = 2000;
+static constexpr uint32_t kDisplayOffHoldMs = 4000;
 
 static Audio audio(I2S_NUM_0);
 static Preferences preferences;
@@ -54,12 +57,6 @@ struct WebRadioStation {
   const char* url;
 };
 
-struct Mp3TrackMetadata {
-  const char* id;
-  const char* title;
-  const char* artist;
-};
-
 static const WebRadioStation kStations[] = {
     {"Groove Salad", "http://ice2.somafm.com/groovesalad-128-mp3"},
     {"Drone Zone", "http://ice2.somafm.com/dronezone-128-mp3"},
@@ -67,16 +64,6 @@ static const WebRadioStation kStations[] = {
     {"Space Station Soma", "http://ice2.somafm.com/spacestation-128-mp3"},
 };
 static constexpr size_t kStationCount = sizeof(kStations) / sizeof(kStations[0]);
-
-static const Mp3TrackMetadata kMp3TrackMetadata[] = {
-    {"14", "シャイニングスター", "魔王魂"},
-    {"32", "ときめき☆ラビリンス", "魔王魂"},
-    {"46", "夜明けのHighway", "魔王魂"},
-    {"47", "GAIA", "魔王魂"},
-    {"49", "Piece Maker", "魔王魂"},
-};
-static constexpr size_t kMp3TrackMetadataCount =
-    sizeof(kMp3TrackMetadata) / sizeof(kMp3TrackMetadata[0]);
 
 enum class AppMode : uint8_t {
   Radio,
@@ -157,12 +144,17 @@ static uint32_t volumeChangedAtMs = 0;
 static volatile bool audioMuted = false;
 static bool audioOutputReady = false;
 static volatile bool audioOutputMuted = true;
+static bool audioGainMuted = true;
 static bool usbPowerPresent = false;
 static bool usbPowerKnown = false;
 static bool usbIdleStandby = false;
 static uint32_t lastUsbPowerPollMs = 0;
 static EqPreset eqPreset = EqPreset::Flat;
 static bool keyChordActive = false;
+static bool displaySleeping = false;
+static bool suppressKey1UntilRelease = false;
+static bool key1LongActionTriggered = false;
+static bool key1DisplayOffTriggered = false;
 static size_t stationIndex = 0;
 static String currentStatus;
 static bool streamReadyShown = false;
@@ -191,13 +183,14 @@ static bool sdBusStarted = false;
 static uint32_t lastSdMountAttemptMs = 0;
 static uint32_t lastSdPresenceCheckMs = 0;
 static bool mp3Paused = false;
-static bool mp3UsesKnownMetadata = false;
+static bool mp3MetadataResolved = false;
 static volatile bool mp3EofPending = false;
 static uint32_t mp3DisplayDuration = 0;
 static uint32_t mp3DurationCandidate = 0;
 static uint32_t mp3DurationCandidateSinceMs = 0;
 static String mp3Title;
 static String mp3Artist;
+static String savedMp3TrackPath;
 static String lastDrawnMp3Title;
 static String lastDrawnMp3Artist;
 static uint32_t mp3TitleScrollStartMs = 0;
@@ -263,6 +256,9 @@ static void updateAudioOutputGate(bool force = false);
 static void disableWiFiForMp3();
 static void handlePeripheralControls();
 static void handleM5Keys();
+static void toggleMp3LowerView(bool save);
+static void sleepDisplay();
+static void wakeDisplay();
 static void handleSdHotplug();
 static bool playMp3Track(size_t index);
 static void switchAppMode(AppMode mode);
@@ -343,6 +339,11 @@ static void initSpectrumFft() {
 
 static void showStatus(const char* status) {
   currentStatus = status;
+  if (displaySleeping) {
+    Serial.printf("[Status] %s\n", status);
+    updateAudioOutputGate();
+    return;
+  }
   if (strcmp(status, "Error") == 0 || strcmp(status, "No stream URL") == 0) {
     spectrumStatusDrawn = false;
     lastDrawnSpectrumStatus = "";
@@ -453,6 +454,11 @@ static void loadSavedStation() {
       preferences.getUChar("mode", static_cast<uint8_t>(AppMode::Radio));
   const uint8_t savedEq =
       preferences.getUChar("eq", static_cast<uint8_t>(EqPreset::Flat));
+  const uint8_t savedMp3View =
+      preferences.getUChar("mp3_view", static_cast<uint8_t>(Mp3LowerView::Progress));
+  const uint8_t savedMp3Loop =
+      preferences.getUChar("mp3_loop", static_cast<uint8_t>(Mp3LoopMode::All));
+  savedMp3TrackPath = preferences.getString("mp3_track", "");
   wifiSsid = preferences.getString("wifi_ssid", WIFI_SSID);
   wifiPassword = preferences.getString("wifi_pass", WIFI_PASSWORD);
   preferences.end();
@@ -465,6 +471,12 @@ static void loadSavedStation() {
   if (savedEq < static_cast<uint8_t>(EqPreset::Count)) {
     eqPreset = static_cast<EqPreset>(savedEq);
   }
+  if (savedMp3View <= static_cast<uint8_t>(Mp3LowerView::Spectrum)) {
+    mp3LowerView = static_cast<Mp3LowerView>(savedMp3View);
+  }
+  if (savedMp3Loop <= static_cast<uint8_t>(Mp3LoopMode::Shuffle)) {
+    mp3LoopMode = static_cast<Mp3LoopMode>(savedMp3Loop);
+  }
   volumeLevel = savedVolume <= kMaximumVolume ? savedVolume : kDefaultVolume;
   lastSavedVolume = volumeLevel;
   audioMuted = false;
@@ -472,6 +484,12 @@ static void loadSavedStation() {
                 static_cast<unsigned>(kStationCount), currentStationName());
   Serial.printf("[Audio] boot volume=%u/%u mute=0\n", volumeLevel, kMaximumVolume);
   Serial.printf("[EQ] boot preset=%s\n", kEqPresets[static_cast<uint8_t>(eqPreset)].name);
+  Serial.printf("[MP3] boot view=%s\n",
+                mp3LowerView == Mp3LowerView::Progress ? "progress" : "spectrum");
+  static const char* loopNames[] = {"one", "all", "shuffle"};
+  Serial.printf("[MP3] boot loop=%s track=%s\n",
+                loopNames[static_cast<uint8_t>(mp3LoopMode)],
+                savedMp3TrackPath.isEmpty() ? "<first>" : savedMp3TrackPath.c_str());
   Serial.printf("[Mode] boot %s\n", appMode == AppMode::Mp3 ? "MP3" : "RADIO");
   Serial.printf("[WiFi] configured SSID '%s'\n", wifiSsid.c_str());
 }
@@ -1042,6 +1060,9 @@ static void drawMp3Progress() {
 }
 
 static void renderUi() {
+  if (displaySleeping) {
+    return;
+  }
   const uint32_t now = millis();
   if (!uiNeedsFullRedraw && now - lastUiUpdateMs < 80) {
     return;
@@ -1059,6 +1080,35 @@ static void renderUi() {
   }
 }
 
+static void sleepDisplay() {
+  if (displaySleeping) {
+    return;
+  }
+  displaySleeping = true;
+  suppressKey1UntilRelease = true;
+  M5.Display.waitDisplay();
+  M5.Display.sleep();
+  Serial.println("[Display] OFF");
+}
+
+static void wakeDisplay() {
+  if (!displaySleeping) {
+    return;
+  }
+  M5.Display.wakeup();
+  M5.Display.fillScreen(TFT_BLACK);
+  displaySleeping = false;
+  suppressKey1UntilRelease = true;
+  uiNeedsFullRedraw = true;
+  lastDrawnProgramTitle = "";
+  lastDrawnMp3Title = "";
+  lastDrawnMp3Artist = "";
+  lastDrawnSpectrumStatus = "";
+  spectrumStatusDrawn = false;
+  renderUi();
+  Serial.println("[Display] ON");
+}
+
 static bool playbackOutputActive() {
   if (!playbackSamplesSeen) {
     return false;
@@ -1073,14 +1123,18 @@ static void updateAudioOutputGate(bool force) {
   const bool standby = usbPowerPresent && !playbackOutputActive();
   const bool muteOutput = audioMuted || standby;
   const bool changed = standby != usbIdleStandby || muteOutput != audioOutputMuted;
+  const bool gainMuteChanged = audioMuted != audioGainMuted;
   usbIdleStandby = standby;
   audioOutputMuted = muteOutput;
+  audioGainMuted = audioMuted;
 
-  if (!audioOutputReady || (!force && !changed)) {
+  if (!audioOutputReady || (!force && !changed && !gainMuteChanged)) {
     return;
   }
 
-  audio.setMute(muteOutput);
+  // Only the physical mute control uses the library gain ramp. Playback
+  // transitions use the PCM gate so the next track starts at the set volume.
+  audio.setMute(audioMuted);
   const char* reason = audioMuted ? "user" : (standby ? "usb-idle" : "playback");
   Serial.printf("[Audio] output=%s reason=%s\n", muteOutput ? "MUTED" : "ACTIVE", reason);
 }
@@ -1239,23 +1293,87 @@ static String mp3FileTitle(const String& path) {
   return name;
 }
 
-static const Mp3TrackMetadata* findMp3TrackMetadata(const String& path) {
-  int start = path.lastIndexOf('/');
-  String name = start >= 0 ? path.substring(start + 1) : path;
-  if (!name.startsWith("maou_")) {
-    return nullptr;
+static void appendUtf8Codepoint(String& output, uint32_t codepoint) {
+  char encoded[5] = {};
+  if (codepoint <= 0x7F) {
+    encoded[0] = static_cast<char>(codepoint);
+  } else if (codepoint <= 0x7FF) {
+    encoded[0] = static_cast<char>(0xC0 | (codepoint >> 6));
+    encoded[1] = static_cast<char>(0x80 | (codepoint & 0x3F));
+  } else if (codepoint <= 0xFFFF) {
+    encoded[0] = static_cast<char>(0xE0 | (codepoint >> 12));
+    encoded[1] = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+    encoded[2] = static_cast<char>(0x80 | (codepoint & 0x3F));
+  } else if (codepoint <= 0x10FFFF) {
+    encoded[0] = static_cast<char>(0xF0 | (codepoint >> 18));
+    encoded[1] = static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+    encoded[2] = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+    encoded[3] = static_cast<char>(0x80 | (codepoint & 0x3F));
   }
-  const int idEnd = name.indexOf('_', 5);
-  if (idEnd <= 5) {
-    return nullptr;
-  }
-  const String id = name.substring(5, idEnd);
-  for (size_t i = 0; i < kMp3TrackMetadataCount; ++i) {
-    if (id == kMp3TrackMetadata[i].id) {
-      return &kMp3TrackMetadata[i];
+  output += encoded;
+}
+
+static String decodeMislabelledUtf16Id3(const String& input) {
+  std::vector<uint8_t> latinBytes;
+  latinBytes.reserve(input.length());
+  const uint8_t* encoded = reinterpret_cast<const uint8_t*>(input.c_str());
+  for (size_t i = 0; i < input.length(); ++i) {
+    const uint8_t first = encoded[i];
+    if ((first == 0xC2 || first == 0xC3) && i + 1 < input.length() &&
+        (encoded[i + 1] & 0xC0) == 0x80) {
+      const uint16_t codepoint = static_cast<uint16_t>(((first & 0x1F) << 6) |
+                                                       (encoded[i + 1] & 0x3F));
+      latinBytes.push_back(static_cast<uint8_t>(codepoint));
+      ++i;
+    } else {
+      latinBytes.push_back(first);
     }
   }
-  return nullptr;
+
+  if (latinBytes.size() < 2) {
+    return input;
+  }
+  bool bigEndian = false;
+  if (latinBytes[0] == 0xFF && latinBytes[1] == 0xFE) {
+    bigEndian = false;
+  } else if (latinBytes[0] == 0xFE && latinBytes[1] == 0xFF) {
+    bigEndian = true;
+  } else {
+    return input;
+  }
+
+  String output;
+  output.reserve(latinBytes.size() * 2);
+  for (size_t i = 2; i + 1 < latinBytes.size(); i += 2) {
+    uint16_t unit = bigEndian
+                        ? static_cast<uint16_t>((latinBytes[i] << 8) | latinBytes[i + 1])
+                        : static_cast<uint16_t>((latinBytes[i + 1] << 8) | latinBytes[i]);
+    if (unit == 0) {
+      break;
+    }
+
+    uint32_t codepoint = unit;
+    if (unit >= 0xD800 && unit <= 0xDBFF && i + 3 < latinBytes.size()) {
+      const uint16_t low =
+          bigEndian
+              ? static_cast<uint16_t>((latinBytes[i + 2] << 8) | latinBytes[i + 3])
+              : static_cast<uint16_t>((latinBytes[i + 3] << 8) | latinBytes[i + 2]);
+      if (low >= 0xDC00 && low <= 0xDFFF) {
+        codepoint = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
+        i += 2;
+      }
+    }
+    appendUtf8Codepoint(output, codepoint);
+  }
+  return output.isEmpty() ? input : output;
+}
+
+static bool shouldSkipSdEntry(const String& path) {
+  const int separator = path.lastIndexOf('/');
+  const String name = separator >= 0 ? path.substring(separator + 1) : path;
+  return name.isEmpty() || name.startsWith(".") || name.equalsIgnoreCase("__MACOSX") ||
+         name.equalsIgnoreCase("System Volume Information") ||
+         name.equalsIgnoreCase("$RECYCLE.BIN");
 }
 
 static void scanMp3Directory(const char* path, uint8_t depth) {
@@ -1267,8 +1385,14 @@ static void scanMp3Directory(const char* path, uint8_t depth) {
   File entry = directory.openNextFile();
   while (entry) {
     const String entryPath = entry.path();
+    if (shouldSkipSdEntry(entryPath)) {
+      entry.close();
+      entry = directory.openNextFile();
+      continue;
+    }
+
     if (entry.isDirectory()) {
-      if (depth > 0 && !entryPath.endsWith("/System Volume Information")) {
+      if (depth > 0) {
         scanMp3Directory(entryPath.c_str(), depth - 1);
       }
     } else if (isMp3Path(entryPath)) {
@@ -1320,8 +1444,23 @@ static bool mountAndScanSd(bool reportFailure = true) {
     uiNeedsFullRedraw = true;
     return false;
   }
-  if (mp3TrackIndex >= mp3Tracks.size()) {
+  bool restoredTrack = false;
+  if (!savedMp3TrackPath.isEmpty()) {
+    for (size_t i = 0; i < mp3Tracks.size(); ++i) {
+      if (mp3Tracks[i] == savedMp3TrackPath) {
+        mp3TrackIndex = i;
+        restoredTrack = true;
+        break;
+      }
+    }
+  }
+  if (!restoredTrack && mp3TrackIndex >= mp3Tracks.size()) {
     mp3TrackIndex = 0;
+  }
+  if (!savedMp3TrackPath.isEmpty() && !restoredTrack) {
+    Serial.printf("[MP3] saved track missing; using %u/%u\n",
+                  static_cast<unsigned>(mp3TrackIndex + 1),
+                  static_cast<unsigned>(mp3Tracks.size()));
   }
   return true;
 }
@@ -1356,6 +1495,7 @@ static void handleSdCardRemoved() {
   sdMounted = false;
   mp3Tracks.clear();
   mp3Paused = false;
+  mp3MetadataResolved = false;
   mp3DisplayDuration = 0;
   mp3DurationCandidate = 0;
   mp3DurationCandidateSinceMs = 0;
@@ -1417,10 +1557,9 @@ static bool playMp3Track(size_t index) {
   mp3DisplayDuration = 0;
   mp3DurationCandidate = 0;
   mp3DurationCandidateSinceMs = 0;
-  const Mp3TrackMetadata* metadata = findMp3TrackMetadata(mp3Tracks[index]);
-  mp3UsesKnownMetadata = metadata != nullptr;
-  mp3Title = metadata ? metadata->title : mp3FileTitle(mp3Tracks[index]);
-  mp3Artist = metadata ? metadata->artist : "";
+  mp3MetadataResolved = false;
+  mp3Title = "";
+  mp3Artist = "";
   lastDrawnMp3Title = "";
   lastDrawnMp3Artist = "";
   memset(pendingMp3Title, 0, sizeof(pendingMp3Title));
@@ -1439,6 +1578,13 @@ static bool playMp3Track(size_t index) {
     currentStatus = "MP3 error";
     uiNeedsFullRedraw = true;
     return false;
+  }
+  if (savedMp3TrackPath != mp3Tracks[index]) {
+    preferences.begin("pocket-audio", false);
+    preferences.putString("mp3_track", mp3Tracks[index]);
+    preferences.end();
+    savedMp3TrackPath = mp3Tracks[index];
+    Serial.printf("[MP3] saved track=%s\n", savedMp3TrackPath.c_str());
   }
   currentStatus = "Playing";
   return true;
@@ -1486,6 +1632,9 @@ static void cycleMp3LoopMode() {
   mp3LoopMode = static_cast<Mp3LoopMode>(
       (static_cast<uint8_t>(mp3LoopMode) + 1) % 3);
   static const char* names[] = {"one", "all", "shuffle"};
+  preferences.begin("pocket-audio", false);
+  preferences.putUChar("mp3_loop", static_cast<uint8_t>(mp3LoopMode));
+  preferences.end();
   Serial.printf("[MP3] loop=%s\n", names[static_cast<uint8_t>(mp3LoopMode)]);
 }
 
@@ -1494,6 +1643,7 @@ static void processMp3AudioEvents() {
     return;
   }
 
+  bool metadataChanged = false;
   if (pendingMp3MetadataMask != 0) {
     char title[sizeof(pendingMp3Title)];
     char artist[sizeof(pendingMp3Artist)];
@@ -1504,22 +1654,41 @@ static void processMp3AudioEvents() {
     metadataMask = pendingMp3MetadataMask;
     pendingMp3MetadataMask = 0;
     portEXIT_CRITICAL(&mp3MetadataMux);
-    if (!mp3UsesKnownMetadata && (metadataMask & kMp3MetadataTitle) != 0) {
-      String value(title);
+    if ((metadataMask & kMp3MetadataTitle) != 0) {
+      String value = decodeMislabelledUtf16Id3(String(title));
       value.trim();
       if (!value.isEmpty()) {
         mp3Title = value;
+        metadataChanged = true;
         Serial.printf("[MP3] ID3 title=%s\n", mp3Title.c_str());
       }
     }
-    if (!mp3UsesKnownMetadata && (metadataMask & kMp3MetadataArtist) != 0) {
-      String value(artist);
+    if ((metadataMask & kMp3MetadataArtist) != 0) {
+      String value = decodeMislabelledUtf16Id3(String(artist));
       value.trim();
       if (!value.isEmpty()) {
         mp3Artist = value;
+        metadataChanged = true;
         Serial.printf("[MP3] ID3 artist=%s\n", mp3Artist.c_str());
       }
     }
+  }
+
+  if (!mp3MetadataResolved && playbackSamplesSeen) {
+    mp3MetadataResolved = true;
+    if (mp3Title.isEmpty() && mp3TrackIndex < mp3Tracks.size()) {
+      mp3Title = mp3FileTitle(mp3Tracks[mp3TrackIndex]);
+      Serial.printf("[MP3] no ID3 title; filename fallback=%s\n", mp3Title.c_str());
+    }
+    metadataChanged = true;
+  }
+
+  if (metadataChanged) {
+    lastDrawnMp3Title = "";
+    lastDrawnMp3Artist = "";
+    mp3TitleScrollStartMs = millis();
+    mp3ArtistScrollStartMs = millis();
+    uiNeedsFullRedraw = true;
   }
 
   if (mp3EofPending) {
@@ -1653,6 +1822,28 @@ static void handlePeripheralControls() {
 static void handleM5Keys() {
   const bool key1Pressed = M5.BtnA.isPressed();
   const bool key2Pressed = M5.BtnB.isPressed();
+
+  if (displaySleeping) {
+    if (M5.BtnA.wasPressed()) {
+      wakeDisplay();
+    }
+    if (M5.BtnA.wasReleased()) {
+      suppressKey1UntilRelease = false;
+    }
+    return;
+  }
+  if (suppressKey1UntilRelease) {
+    if (M5.BtnA.wasReleased()) {
+      suppressKey1UntilRelease = false;
+    }
+    return;
+  }
+
+  if (M5.BtnA.wasPressed()) {
+    key1LongActionTriggered = false;
+    key1DisplayOffTriggered = false;
+  }
+
   if (key1Pressed && key2Pressed) {
     if (!keyChordActive) {
       keyChordActive = true;
@@ -1668,6 +1859,35 @@ static void handleM5Keys() {
     return;
   }
 
+  if (M5.BtnA.wasHold() && appMode == AppMode::Mp3) {
+    key1LongActionTriggered = true;
+    toggleMp3LowerView(true);
+  }
+
+  if (appMode == AppMode::Radio && !key1LongActionTriggered &&
+      M5.BtnA.pressedFor(kRadioSetupHoldMs)) {
+    key1LongActionTriggered = true;
+    if (wifiConfigPortalActive) {
+      Serial.println("[Input] KEY1 exit WiFi setup");
+      wifiConfigPortalExitRequested = true;
+    } else {
+      Serial.println("[Input] KEY1 WiFi setup");
+      wifiConfigPortalRequested = true;
+      tuneAbortRequested = tuningBusy;
+    }
+  }
+
+  if (appMode == AppMode::Mp3 && key1LongActionTriggered &&
+      !key1DisplayOffTriggered && M5.BtnA.pressedFor(kDisplayOffHoldMs)) {
+    key1DisplayOffTriggered = true;
+    toggleMp3LowerView(true);
+    Serial.println("[Input] KEY1 MP3 display off");
+    sleepDisplay();
+    return;
+  }
+
+  const bool key1Clicked = M5.BtnA.wasReleased() && !key1LongActionTriggered;
+
   if (M5.BtnB.wasHold()) {
     const AppMode next = appMode == AppMode::Radio ? AppMode::Mp3 : AppMode::Radio;
     pendingAppMode = static_cast<int>(next);
@@ -1676,15 +1896,9 @@ static void handleM5Keys() {
   }
 
   if (appMode == AppMode::Radio) {
-    if (M5.BtnA.wasHold()) {
-      if (wifiConfigPortalActive) {
-        Serial.println("[Input] KEY1 exit WiFi setup");
-        wifiConfigPortalExitRequested = true;
-      } else {
-        Serial.println("[Input] KEY1 WiFi setup");
-        wifiConfigPortalRequested = true;
-        tuneAbortRequested = tuningBusy;
-      }
+    if (key1Clicked) {
+      Serial.println("[Input] KEY1 WebRadio display off");
+      sleepDisplay();
     }
     return;
   }
@@ -1692,15 +1906,23 @@ static void handleM5Keys() {
   if (appMode != AppMode::Mp3) {
     return;
   }
-  if (M5.BtnA.wasHold()) {
-    mp3LowerView = mp3LowerView == Mp3LowerView::Progress ? Mp3LowerView::Spectrum
-                                                         : Mp3LowerView::Progress;
-    Serial.printf("[MP3] view=%s\n",
-                  mp3LowerView == Mp3LowerView::Progress ? "progress" : "spectrum");
-    uiNeedsFullRedraw = true;
-  } else if (M5.BtnA.wasClicked()) {
+  if (key1Clicked) {
     toggleMp3Pause();
   }
+}
+
+static void toggleMp3LowerView(bool save) {
+  mp3LowerView = mp3LowerView == Mp3LowerView::Progress ? Mp3LowerView::Spectrum
+                                                       : Mp3LowerView::Progress;
+  if (save) {
+    preferences.begin("pocket-audio", false);
+    preferences.putUChar("mp3_view", static_cast<uint8_t>(mp3LowerView));
+    preferences.end();
+  }
+  Serial.printf("[MP3] view=%s%s\n",
+                mp3LowerView == Mp3LowerView::Progress ? "progress" : "spectrum",
+                save ? " saved" : "");
+  uiNeedsFullRedraw = true;
 }
 
 static bool playStream();
@@ -2254,6 +2476,7 @@ void setup() {
   cfg.internal_imu = false;
   cfg.internal_rtc = false;
   M5.begin(cfg);
+  M5.BtnA.setHoldThresh(kMp3ViewHoldMs);
   updateUsbPowerState(true);
 
   M5.Display.setRotation(1);

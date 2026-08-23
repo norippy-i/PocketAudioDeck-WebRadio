@@ -34,11 +34,14 @@ cable connector side with M2 x 6 mm self-tapping screws.
 - Four SomaFM Non-SSL 128kbps MP3 stations
 - ICY stream-title display with horizontal scrolling
 - PCM-driven FFT spectrum display
-- microSD MP3 playback with metadata and progress display
+- microSD MP3 playback with ID3-first title/artist display and filename fallback
 - Repeat-one, repeat-all, and shuffle modes
-- Persistent station, mode, volume, and EQ settings
+- Progress/spectrum view with automatic scrolling for long metadata
+- Seamless MP3 track changes at the selected volume; fade-in is used only when mute is released
+- Persistent station, mode, volume, EQ, MP3 view, repeat mode, and current track
+- Display-off and one-touch wake behavior in both radio and MP3 modes
 - QR-code Wi-Fi setup and captive portal
-- Automatic SD card insertion/removal handling
+- Automatic SD card insertion/removal handling with hidden system folders excluded
 
 ## Included Stations
 
@@ -56,10 +59,10 @@ change, so verify them against [SomaFM's official listen page](https://somafm.co
 No Wi-Fi credentials are stored in this repository.
 
 1. Start in radio mode.
-2. Hold KEY1 to show the Wi-Fi setup QR code.
+2. Hold KEY1 for about 2 seconds to show the Wi-Fi setup QR code.
 3. Scan it and join `PocketAudioDeck-Setup`.
 4. Enter the target Wi-Fi SSID and password in the captive portal.
-5. Hold KEY1 again to leave setup without changing credentials.
+5. Hold KEY1 for about 2 seconds again to leave setup without changing credentials.
 
 Credentials are stored in ESP32 NVS.
 
@@ -70,8 +73,11 @@ Credentials are stored in ESP32 NVS.
 - Volume control left/right: volume down/up
 - Volume control push: toggle mute
 - KEY1 click in MP3 mode: play/pause
-- KEY1 hold in MP3 mode: progress/spectrum view
-- KEY1 hold in radio mode: enter/leave Wi-Fi setup
+- KEY1 click in Web Radio mode: turn the display off
+- KEY1 hold for 1 second in MP3 mode: switch and save the progress/spectrum view
+- KEY1 hold for 4 seconds in MP3 mode: restore the previous view and turn the display off
+- KEY1 hold for 2 seconds in Web Radio mode: enter/leave Wi-Fi setup
+- KEY1 press while the display is off: wake the display without triggering another action
 - KEY2 click in MP3 mode: change repeat mode
 - KEY2 hold: switch radio/MP3 mode
 - KEY1 + KEY2: cycle EQ preset
